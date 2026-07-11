@@ -72,8 +72,18 @@ def rerank_and_generate(query, query_embedding, candidates, request_logger=None)
     try:
         client = CloudAI100Client()
         answer = generate_answer(query, ranked_sources, client)
-    except Exception as exc:
+    except NotImplementedError as exc:
+        # Expected until CloudAI100Client is wired to real hardware — see
+        # cloud/inference.py. Falling back keeps /query working in the
+        # meantime, so this is a WARNING, not an error.
         log.warning("Cloud AI 100 unavailable, falling back to local templated answer: %s", exc)
+        answer = _template_fallback_answer(query, ranked_sources)
+    except Exception:
+        # Anything else is a real bug (in generate_answer, the client once
+        # it's real, etc.) — log it distinctly, with a traceback, so it
+        # doesn't get silently mislabeled as "hardware not wired up yet".
+        # Still falls back rather than raising, so a live demo survives it.
+        log.exception("Unexpected error generating a Cloud AI 100 answer; falling back to local templated answer")
         answer = _template_fallback_answer(query, ranked_sources)
 
     return {"answer": answer, "ranked_sources": ranked_sources}

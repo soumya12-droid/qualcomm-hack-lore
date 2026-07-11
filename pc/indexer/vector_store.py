@@ -102,6 +102,18 @@ class VectorStore:
             self.text_table.add(rows)
         return rows
 
+    def delete_by_location(self, location):
+        """Delete all text-table rows for a given location (file path or URL).
+
+        Used to clear a file's previous chunks before re-indexing it, so
+        edits don't leave stale rows behind and re-saving unchanged content
+        doesn't duplicate rows. A no-op if no rows match.
+
+        Side effects: writes to LanceDB (row deletion).
+        """
+        escaped = location.replace("'", "''")
+        self.text_table.delete(f"location = '{escaped}'")
+
     def search(self, query_embedding, top_k=5):
         """Return the top_k nearest text-table rows to query_embedding, nearest first.
 
