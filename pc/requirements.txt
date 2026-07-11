@@ -12,3 +12,7 @@ onnx
 # Copilot+ PC). It cannot be installed on other platforms, so it is left out
 # here — install it separately on the target hardware:
 #   pip install onnxruntime-qnn
+
+# Phase 2 — backend API dependencies.
+fastapi
+uvicorn
