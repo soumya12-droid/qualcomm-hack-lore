@@ -17,7 +17,10 @@ Side effects: creates an onnxruntime.InferenceSession (loads the model file
 into memory); logs provider selection/fallback via profiler.py.
 """
 
+import os
+import glob
 import logging
+from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
@@ -65,20 +68,77 @@ class Embedder:
     def _create_session(self):
         """Create the ONNX Runtime session using the highest-priority
         available provider(s). Side effects: loads model_path from disk."""
+        # Find FastRPC DLL on Windows ARM64 dynamically
+        fastrpc_dir = None
+        try:
+            pattern = 'C:/Windows/System32/DriverStore/FileRepository/**/libcdsprpc.dll'
+            matches = glob.glob(pattern, recursive=True)
+            if matches:
+                fastrpc_dir = os.path.dirname(matches[0])
+        except Exception:
+            pass
+
+        # Load QNN Execution Provider if possible
+        qnn_registered = False
+        provider_options = None
+        try:
+            import onnxruntime_qnn as qnn_ep
+            qnn_dir = os.path.dirname(os.path.abspath(qnn_ep.__file__))
+            
+            # Set search paths
+            paths = [qnn_dir]
+            if fastrpc_dir:
+                paths.append(fastrpc_dir)
+            os.environ['PATH'] = os.pathsep.join(paths) + os.pathsep + os.environ['PATH']
+            if hasattr(os, "add_dll_directory"):
+                for p in paths:
+                    try:
+                        os.add_dll_directory(p)
+                    except Exception:
+                        pass
+                        
+            # Register library
+            ort.register_execution_provider_library('QNNExecutionProvider', qnn_ep.get_library_path())
+            qnn_registered = True
+            
+            # Setup provider options
+            provider_options = {
+                "QNNExecutionProvider": {"backend_path": qnn_ep.get_qnn_htp_path()}
+            }
+            logger.info("Successfully registered QNNExecutionProvider with backend_path=%s", qnn_ep.get_qnn_htp_path())
+        except Exception as e:
+            logger.debug("QNNExecutionProvider registration skipped/failed: %s", e)
+
         available = set(ort.get_available_providers())
-        requested = [p for p in self.preferred_providers if p in available]
+        requested = []
+        session_provider_options = []
+        
+        for provider in self.preferred_providers:
+            if provider in available:
+                requested.append(provider)
+                if provider_options and provider in provider_options:
+                    session_provider_options.append(provider_options[provider])
+                else:
+                    session_provider_options.append({})
+                    
         if not requested:
             raise ExecutionProviderUnavailableError(
                 f"None of the preferred providers {self.preferred_providers} are available; "
                 f"onnxruntime reports {sorted(available)}"
             )
-        return ort.InferenceSession(str(self.model_path), providers=requested)
+            
+        return ort.InferenceSession(
+            str(self.model_path), 
+            providers=requested,
+            provider_options=session_provider_options
+        )
 
-    def embed(self, texts):
+    def embed(self, texts, prefix="document: "):
         """Embed a list of raw text strings.
 
         Args:
             texts: list[str].
+            prefix: str. prepended to each text if model expects tokenized inputs.
         Returns:
             list[list[float]], one embedding vector per input text, in order.
             [] if texts is empty.
@@ -89,13 +149,55 @@ class Embedder:
         if not texts:
             return []
 
-        input_meta = self.session.get_inputs()[0]
-        input_dim = input_meta.shape[-1]
-        if not isinstance(input_dim, int):
-            raise ValueError(f"Model input's last dimension must be static, got shape {input_meta.shape}")
+        # Check model inputs to see if we're in real Gemma mode (expects input_ids/attention_mask)
+        # or toy/smoke mode (expects a single vector).
+        inputs = self.session.get_inputs()
+        input_names = [i.name for i in inputs]
 
-        feed = {input_meta.name: self.preprocess_fn(texts, input_dim)}
-        output_name = self.session.get_outputs()[0].name
+        if "input_ids" in input_names and "attention_mask" in input_names:
+            # Gemma mode: load sentencepiece tokenizer if not already done
+            if not hasattr(self, "sp_processor"):
+                tokenizer_path = Path(self.model_path).parent.parent / "tokenizer.model"
+                if not tokenizer_path.exists():
+                    # Fallback to model directory itself
+                    tokenizer_path = Path(self.model_path).parent / "tokenizer.model"
+                if not tokenizer_path.exists():
+                    raise FileNotFoundError(f"tokenizer.model not found at {tokenizer_path}")
+                
+                import sentencepiece as spm
+                self.sp_processor = spm.SentencePieceProcessor()
+                self.sp_processor.Load(str(tokenizer_path))
+
+            prefixed_texts = [f"{prefix}{t}" for t in texts]
+            # Encode with BOS token (Gemma BOS token ID is 2)
+            input_ids = [[2] + self.sp_processor.EncodeAsIds(text) for text in prefixed_texts]
+            max_len = max(len(seq) for seq in input_ids)
+
+            padded_input_ids = []
+            attention_mask = []
+            for seq in input_ids:
+                pad_len = max_len - len(seq)
+                padded_input_ids.append(seq + [0] * pad_len)
+                attention_mask.append([1] * len(seq) + [0] * pad_len)
+
+            feed = {
+                "input_ids": np.array(padded_input_ids, dtype=np.int64),
+                "attention_mask": np.array(attention_mask, dtype=np.int64)
+            }
+        else:
+            # Toy/smoke model mode
+            input_meta = inputs[0]
+            input_dim = input_meta.shape[-1]
+            if not isinstance(input_dim, int):
+                raise ValueError(f"Model input's last dimension must be static, got shape {input_meta.shape}")
+            feed = {input_meta.name: self.preprocess_fn(texts, input_dim)}
+
+        outputs = self.session.get_outputs()
+        output_names = [o.name for o in outputs]
+        if "sentence_embedding" in output_names:
+            output_name = "sentence_embedding"
+        else:
+            output_name = outputs[0].name
 
         with self.profiler.track(self.active_provider):
             outputs = self.session.run([output_name], feed)
