@@ -1,7 +1,7 @@
-"""Phase 2 — POST /query: embed the query, search LanceDB for the top-5
-nearest chunks, hand them to the (stubbed, Phase 3-real) Cloud AI 100
-client for reranking + answer generation, and return the final answer +
-sources to the caller (the mobile app).
+"""Phase 2/3 — POST /query: embed the query, search LanceDB for the top-5
+nearest chunks, hand them to the Cloud AI 100 client (cloud_client.py) for
+reranking + answer generation, and return the final answer + sources to
+the caller (the mobile app).
 
 Input: QueryRequest {text, modality}.
 Output: QueryResponse {answer, sources[]}.
@@ -47,7 +47,7 @@ def query(request: QueryRequest, embedder=Depends(get_embedder), vector_store=De
     logger.debug("LanceDB search took %.2fms, %d candidates", search_ms, len(candidates))
 
     cloud_start = time.perf_counter()
-    result = cloud_client.rerank_and_generate(request.text, candidates)
+    result = cloud_client.rerank_and_generate(request.text, embedding, candidates)
     cloud_ms = (time.perf_counter() - cloud_start) * 1000
     logger.debug("Cloud AI 100 round-trip took %.2fms", cloud_ms)
 

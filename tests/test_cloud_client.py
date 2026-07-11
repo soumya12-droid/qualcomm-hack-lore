@@ -1,53 +1,78 @@
+import logging
+
+from pc.api import cloud_client
 from pc.api.cloud_client import rerank_and_generate
 
 
 def test_empty_candidates_returns_no_results_message():
-    result = rerank_and_generate("neural embeddings research", [])
+    result = rerank_and_generate("neural embeddings research", [1.0, 0.0], [])
     assert result["ranked_sources"] == []
     assert "neural embeddings research" in result["answer"]
     assert "No relevant results" in result["answer"]
 
 
-def test_candidates_are_passed_through_unchanged_and_in_order():
+def test_candidates_are_reranked_by_similarity_to_query_embedding():
+    query_embedding = [1.0, 0.0]
     candidates = [
-        {"title": "a.txt", "chunk": "first chunk", "location": "/a.txt"},
-        {"title": "b.txt", "chunk": "second chunk", "location": "/b.txt"},
+        {"title": "orthogonal", "chunk": "unrelated", "embedding": [0.0, 1.0]},
+        {"title": "match", "chunk": "relevant content", "embedding": [1.0, 0.0]},
     ]
-    result = rerank_and_generate("query", candidates)
-    assert result["ranked_sources"] == candidates
-    assert result["ranked_sources"][0]["title"] == "a.txt"
-    assert result["ranked_sources"][1]["title"] == "b.txt"
+    result = rerank_and_generate("query", query_embedding, candidates)
+    assert [c["title"] for c in result["ranked_sources"]] == ["match", "orthogonal"]
 
 
-def test_answer_references_top_candidate_title_and_excerpt():
-    candidates = [{"title": "notes.txt", "chunk": "the hackathon starts July 11", "location": "/notes.txt"}]
-    result = rerank_and_generate("when does it start", candidates)
+def test_falls_back_to_templated_answer_when_cloud_ai100_unavailable():
+    # CloudAI100Client isn't wired to real hardware in this sandbox (see
+    # cloud/inference.py), so rerank_and_generate() must fall back to the
+    # local templated answer rather than raising.
+    candidates = [{"title": "notes.txt", "chunk": "the hackathon starts July 11", "embedding": [1.0, 0.0]}]
+    result = rerank_and_generate("when does it start", [1.0, 0.0], candidates)
     assert "notes.txt" in result["answer"]
     assert "the hackathon starts July 11" in result["answer"]
 
 
-def test_long_chunk_text_is_truncated_in_the_answer():
+def test_fallback_logs_a_warning(caplog):
+    candidates = [{"title": "a", "chunk": "b", "embedding": [1.0, 0.0]}]
+    with caplog.at_level(logging.WARNING, logger="lore"):
+        rerank_and_generate("query", [1.0, 0.0], candidates)
+    assert "Cloud AI 100 unavailable" in caplog.text
+
+
+def test_uses_real_client_answer_when_cloud_ai100_available(monkeypatch):
+    class FakeWorkingClient:
+        def generate(self, prompt):
+            return "a real Cloud AI 100 generated answer"
+
+    monkeypatch.setattr(cloud_client, "CloudAI100Client", FakeWorkingClient)
+
+    candidates = [{"title": "a", "chunk": "b", "embedding": [1.0, 0.0]}]
+    result = rerank_and_generate("query", [1.0, 0.0], candidates)
+
+    assert result["answer"] == "a real Cloud AI 100 generated answer"
+
+
+def test_long_chunk_text_is_truncated_in_the_fallback_answer():
     long_chunk = "word " * 100  # far more than 200 chars
-    candidates = [{"title": "long.txt", "chunk": long_chunk, "location": "/long.txt"}]
-    result = rerank_and_generate("query", candidates)
+    candidates = [{"title": "long.txt", "chunk": long_chunk, "embedding": [1.0, 0.0]}]
+    result = rerank_and_generate("query", [1.0, 0.0], candidates)
     assert result["answer"].endswith("...")
     assert len(result["answer"]) < len(long_chunk)
 
 
 def test_missing_chunk_text_falls_back_to_generic_answer():
-    candidates = [{"title": "empty.txt", "chunk": "", "location": "/empty.txt"}]
-    result = rerank_and_generate("query", candidates)
+    candidates = [{"title": "empty.txt", "chunk": "", "embedding": [1.0, 0.0]}]
+    result = rerank_and_generate("query", [1.0, 0.0], candidates)
     assert "empty.txt" in result["answer"]
 
 
 def test_missing_title_falls_back_to_generic_label():
-    candidates = [{"chunk": "some content", "location": "/x.txt"}]
-    result = rerank_and_generate("query", candidates)
+    candidates = [{"chunk": "some content", "embedding": [1.0, 0.0]}]
+    result = rerank_and_generate("query", [1.0, 0.0], candidates)
     assert "an indexed document" in result["answer"]
 
 
 def test_does_not_mutate_input_candidates():
-    candidates = [{"title": "a", "chunk": "b", "location": "/a"}]
-    original = list(candidates)
-    rerank_and_generate("query", candidates)
+    candidates = [{"title": "a", "chunk": "b", "embedding": [1.0, 0.0]}]
+    original = [dict(c) for c in candidates]
+    rerank_and_generate("query", [1.0, 0.0], candidates)
     assert candidates == original

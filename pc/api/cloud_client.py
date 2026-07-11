@@ -1,42 +1,36 @@
-"""Phase 2 — client stub for the Cloud AI 100 reranking/generation step.
+"""Phase 3 — Cloud AI 100 client wiring for the /query route: reranks
+candidates via cloud.reranker, attempts real generation via
+cloud.inference.CloudAI100Client, and falls back to a deterministic
+templated answer (Phase 2's original behavior) if that's unavailable —
+which it always is until cloud/inference.py's CloudAI100Client is wired
+up on-site to real hardware (see that module's docstring for why it's
+intentionally left unimplemented here).
 
-Phase 2 stub: does no real reranking or LLM generation (the actual
-Qualcomm AI SDK client lands in Phase 3's cloud/inference.py, wired in
-here). Passes candidates through in their incoming order (already
-distance-sorted by vector_store.search()) and synthesizes a simple
-templated answer referencing the top candidate.
-
-Input: a query string + the top-k candidate chunk rows from
-VectorStore.search().
-Output: {"answer": str, "ranked_sources": list[dict]} — matches the real
-Phase 3 client's output contract so routes_query.py doesn't change shape
-when the stub is swapped out.
-Side effects: none (no network call in this stub).
+Input: a query string + its embedding + the top-k candidate chunk rows
+from VectorStore.search().
+Output: {"answer": str, "ranked_sources": list[dict]}.
+Side effects: attempts to construct a CloudAI100Client and call it (a
+real Cloud AI 100 hardware call, once wired); logs a warning and falls
+back to a local templated answer if that fails, so /query keeps working
+before real hardware is wired up.
 """
+
+import logging
+
+from cloud import reranker
+from cloud.inference import CloudAI100Client, generate_answer
+
+logger = logging.getLogger("lore")
 
 _EXCERPT_MAX_CHARS = 200
 
 
-def rerank_and_generate(query, candidates):
-    """Phase 2 stub for Cloud AI 100 reranking + answer generation.
-
-    Args:
-        query: the original user query text.
-        candidates: list of chunk row dicts (from VectorStore.search()),
-            already ordered nearest-first.
-
-    Returns:
-        {"answer": str, "ranked_sources": list[dict]}. `ranked_sources` is
-        `candidates` unchanged (no real reranking yet — Phase 3 replaces
-        this). `answer` is a templated string built from the top
-        candidate's chunk text, or a "no relevant results" message if
-        candidates is empty.
-    """
+def _template_fallback_answer(query, candidates):
+    """Deterministic templated answer over the top candidate (Phase 2's
+    original behavior) — used whenever Cloud AI 100 generation is
+    unavailable, so /query keeps working before real hardware is wired up."""
     if not candidates:
-        return {
-            "answer": f'No relevant results found for "{query}".',
-            "ranked_sources": [],
-        }
+        return f'No relevant results found for "{query}".'
 
     top = candidates[0]
     excerpt = (top.get("chunk") or "").strip()
@@ -44,6 +38,37 @@ def rerank_and_generate(query, candidates):
         excerpt = excerpt[:_EXCERPT_MAX_CHARS].rstrip() + "..."
 
     title = top.get("title") or "an indexed document"
-    answer = f'Based on "{title}": {excerpt}' if excerpt else f'Found a match in "{title}".'
+    return f'Based on "{title}": {excerpt}' if excerpt else f'Found a match in "{title}".'
 
-    return {"answer": answer, "ranked_sources": candidates}
+
+def rerank_and_generate(query, query_embedding, candidates):
+    """Rerank candidates and generate an answer — via the real Cloud AI
+    100 client if available, else a local templated fallback.
+
+    Args:
+        query: the original user query text.
+        query_embedding: the query's embedding vector (used for reranking).
+        candidates: list of chunk row dicts (from VectorStore.search()).
+
+    Returns:
+        {"answer": str, "ranked_sources": list[dict]}. `ranked_sources` is
+        `candidates` reordered by cloud.reranker.rerank(). `answer` comes
+        from the real Cloud AI 100 client when available, else a
+        deterministic templated fallback over the top-ranked candidate.
+    """
+    if not candidates:
+        return {
+            "answer": f'No relevant results found for "{query}".',
+            "ranked_sources": [],
+        }
+
+    ranked_sources = reranker.rerank(query_embedding, candidates)
+
+    try:
+        client = CloudAI100Client()
+        answer = generate_answer(query, ranked_sources, client)
+    except Exception as exc:
+        logger.warning("Cloud AI 100 unavailable, falling back to local templated answer: %s", exc)
+        answer = _template_fallback_answer(query, ranked_sources)
+
+    return {"answer": answer, "ranked_sources": ranked_sources}
