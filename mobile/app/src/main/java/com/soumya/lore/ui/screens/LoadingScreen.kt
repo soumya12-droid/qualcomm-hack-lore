@@ -32,7 +32,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.soumya.lore.data.awaitMockSearch
 import com.soumya.lore.data.generateKnowledgeGraph
 import com.soumya.lore.data.pathPosition
 import com.soumya.lore.ui.components.KnowledgeGraphCanvas
@@ -59,6 +58,7 @@ private const val TRAVEL_LAP_DURATION_MS = 7000
 fun LoadingScreen(
     query: String,
     onComplete: () -> Unit,
+    queryViewModel: QueryViewModel,
     modifier: Modifier = Modifier
 ) {
     val graph = remember { generateKnowledgeGraph() }
@@ -102,8 +102,9 @@ fun LoadingScreen(
         // Only the 3-5 nodes geometrically near the path light up, timed to
         // when the dot actually passes near each one — everything else off
         // the path stays dim no matter how long the search takes. Both this
-        // and the (mocked) backend call must finish before we exit — if the
-        // backend is slow, the loop just keeps traveling seamlessly.
+        // and the real /query call (via QueryViewModel) must finish before
+        // we exit — if the backend is slow, the loop just keeps traveling
+        // seamlessly.
         isTraveling = true
         val travelJob = launch {
             while (true) {
@@ -113,7 +114,7 @@ fun LoadingScreen(
         }
 
         coroutineScope {
-            launch { awaitMockSearch() }
+            launch { queryViewModel.runQuery(query) }
             launch {
                 var previousT = 0f
                 for ((nodeIndex, pathT) in graph.relevantNodePlan) {
@@ -226,6 +227,6 @@ fun LoadingScreen(
 @Composable
 private fun LoadingScreenPreview() {
     LoreTheme {
-        LoadingScreen(query = "best hackathons", onComplete = {})
+        LoadingScreen(query = "best hackathons", onComplete = {}, queryViewModel = QueryViewModel())
     }
 }
