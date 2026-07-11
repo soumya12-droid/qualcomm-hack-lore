@@ -73,9 +73,10 @@ This is the most important thing to understand. Each device has one job. Removin
 ### Device 3 — Mobile App (the interface)
 **Job:** The only thing the user actually touches
 
-- React Native app (Android, OnePlus)
-- Mic button → Sarvam AI SDK converts voice to text (supports English and Hindi)
+- Native Android app (Kotlin + Jetpack Compose, Navigation Compose), OnePlus
+- Mic button → records via `MediaRecorder`, uploads to Sarvam AI's Speech-to-Text REST API (OkHttp) → transcript fills the search field (English and Hindi via Sarvam's `language_code="unknown"` auto-detect)
 - Sends `{ text, modality }` query to PC's FastAPI endpoint over local WiFi
+- A Canvas-based knowledge-graph animation plays on the Loading screen while the query is in flight, then unfolds into the Answer card
 - Displays results: LLM answer + top 5 file names, locations, and excerpts
 - The phone cannot run the indexing or the large LLM — it is purely the access layer
 
@@ -297,12 +298,15 @@ lore/
 
 ## Full Tech Stack
 
-### Mobile (React Native — Android)
+### Mobile (Kotlin + Jetpack Compose — native Android)
 | Library | Purpose |
 |---|---|
-| React Native | Cross-platform mobile UI |
-| Sarvam AI SDK | Voice input — English and Hindi |
-| Axios | HTTP calls to PC's local API |
+| Jetpack Compose + Material 3 | UI |
+| Navigation Compose | Screen routing (Home → Loading → Results) |
+| MediaRecorder | Records voice queries (`.m4a`/AAC, 16kHz) |
+| OkHttp (singleton client) | Voice upload to Sarvam AI STT + queries to PC's local API |
+| Sarvam AI Speech-to-Text REST API | Voice input — English and Hindi (`language_code="unknown"` auto-detect) |
+| Kotlin Coroutines | Async recording/upload/query flow |
 
 ### PC — Indexing Engine (Python)
 | Library | Purpose |
@@ -359,9 +363,9 @@ lore/
 
 [User speaks query into phone]
         ↓
-[Mobile: Sarvam AI converts voice to text]
+[Mobile: MediaRecorder captures audio → uploaded to Sarvam AI STT → transcript]
         ↓
-[Mobile: Axios sends POST /query {text, modality} to PC's FastAPI server over local WiFi]
+[Mobile: OkHttp sends POST /query {text, modality} to PC's FastAPI server over local WiFi]
         ↓
 [PC: FastAPI embeds query (EmbeddingGemma 300M) → searches LanceDB → top 5 matches + embeddings]
         ↓
@@ -482,11 +486,17 @@ lore/
 │   ├── manifest.json
 │   ├── content_script.js       # Dwell time detection
 │   └── background.js           # Page capture + POST {text, url, title} to PC's /index endpoint
-└── mobile/
-    ├── App.js
-    ├── screens/
-    │   └── QueryScreen.js       # Mic button + results display
-    └── package.json
+└── mobile/                      # Native Android app (Kotlin + Jetpack Compose)
+    └── app/src/main/java/com/soumya/lore/
+        ├── MainActivity.kt
+        ├── navigation/AppNavigation.kt      # Home -> Loading -> Result routes
+        ├── audio/AudioRecorder.kt           # MediaRecorder wrapper
+        ├── network/                         # OkHttp client + SarvamService
+        ├── data/                            # Mock data, KnowledgeGraph layout/path math
+        └── ui/
+            ├── screens/                     # HomeScreen, LoadingScreen, ResultScreen
+            ├── components/                  # LoreSearchField, AnswerCard, SourceCard, KnowledgeGraphCanvas, etc.
+            └── theme/                       # Color.kt, Theme.kt, Type.kt
 ```
 
 ---
@@ -504,4 +514,4 @@ When asking Claude Code for help on this project, reference this file for contex
 - *"Using CLAUDE.md, write `logging_config.py` with a rotating file handler and console handler, and show how to use it in the query/index routes."*
 - *"Using CLAUDE.md, we're in Phase 3. Write `cloud/inference.py` that loads Phi-3 mini on the Cloud AI 100 via the Qualcomm AI SDK and implements rerank + generate given a query and top-5 chunks."*
 - *"Using CLAUDE.md, write the Chrome extension `content_script.js` that detects 30-second dwell time and sends `{text, url, title}` to the PC's `/index` endpoint."*
-- *"Using CLAUDE.md, write the React Native `QueryScreen.js` with a mic button using the Sarvam AI SDK, sending `{text, modality: "text"}` to `/query` and rendering the answer + top 5 sources."*
+- *"Using CLAUDE.md, wire the mobile app's `ResultScreen` up to the real `/query` endpoint instead of `mockAnswerFor()`, sending `{text, modality: "text"}` and rendering the answer + top 5 sources."*
