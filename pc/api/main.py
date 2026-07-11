@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from pc.api import routes_query
+from pc.api import routes_index, routes_query
 from pc.api.logging_config import configure_logging
 from pc.indexer.embedder import Embedder
 from pc.indexer.vector_store import VectorStore
@@ -43,6 +43,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Lore", lifespan=lifespan)
 app.include_router(routes_query.router)
+app.include_router(routes_index.router)
 
 
 @app.get("/health")
