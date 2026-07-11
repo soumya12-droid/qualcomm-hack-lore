@@ -1,18 +1,18 @@
 """Phase 3 — Cloud AI 100 client wiring for the /query route: reranks
 candidates via cloud.reranker, attempts real generation via
-cloud.inference.CloudAI100Client, and falls back to a deterministic
+cloud.inference.CloudAI100Client (a Cloud AI 100-hosted model, reached
+via Cirrascale's Imagine SDK), and falls back to a deterministic
 templated answer (Phase 2's original behavior) if that's unavailable —
-which it always is until cloud/inference.py's CloudAI100Client is wired
-up on-site to real hardware (see that module's docstring for why it's
-intentionally left unimplemented here).
+which it is until IMAGINE_API_KEY is set (see cloud/inference.py's
+docstring for the full env-var contract).
 
 Input: a query string + its embedding + the top-k candidate chunk rows
 from VectorStore.search().
 Output: {"answer": str, "ranked_sources": list[dict]}.
 Side effects: attempts to construct a CloudAI100Client and call it (a
-real Cloud AI 100 hardware call, once wired); logs a warning and falls
-back to a local templated answer if that fails, so /query keeps working
-before real hardware is wired up.
+real HTTP call to the Cloud AI 100-hosted model, once IMAGINE_API_KEY is
+set); logs a warning and falls back to a local templated answer if that
+fails, so /query keeps working before credentials are provided.
 """
 
 import logging
