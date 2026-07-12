@@ -9,6 +9,12 @@ lancedb/
 models/
 *.log
 
+# Vendored third-party libraries (pdf.js, Tesseract.js + WASM cores + trained
+# data) — unmodified upstream builds, ~16MB / ~90,000 lines. Not project
+# code, so not committed; run extension/scripts/fetch_libs.js to populate
+# this before loading the extension.
+extension/libs/
+
 # Belt-and-suspenders: mobile/local.properties holds SARVAM_API_KEY and is
 # already excluded by mobile/.gitignore, but keep a root-level rule too so
 # this isn't relying on one nested .gitignore file staying intact.
