@@ -3,7 +3,11 @@ package com.soumya.lore.ui.screens
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.VectorConverter
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -15,11 +19,13 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -43,6 +49,7 @@ import com.soumya.lore.ui.theme.LoreTheme
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -61,6 +68,13 @@ private const val TRICKLE_APPROACH_FACTOR = 0.35f
 private const val TRICKLE_STEP_DURATION_MS = 900
 private const val FAST_ARRIVAL_TWEEN_MS = 500
 private const val LIGHT_UP_TWEEN_MS = 700
+private const val LOADING_PHRASE_INTERVAL_MS = 2400L
+
+private val LoadingPhrases = listOf(
+    "Exploring your digital mind",
+    "Diving deep into your memories",
+    "Piecing together the lore"
+)
 
 /**
  * Three-stage retrieval visualization: the query detaches from Home and
@@ -107,6 +121,29 @@ fun LoadingScreen(
     var graphBoxPositionPx by remember { mutableStateOf<Offset?>(null) }
     var graphBoxSizePx by remember { mutableStateOf<IntSize?>(null) }
     var capsulePositionPx by remember { mutableStateOf<Offset?>(null) }
+
+    // Bottom pulsing status text: cycles through LoadingPhrases on a timer,
+    // with a continuous breathing alpha independent of that cycle — the
+    // composable is torn down (cancelling both) the moment onComplete()
+    // navigates away, so neither needs explicit cleanup.
+    var loadingPhraseIndex by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        // Advances through LoadingPhrases once, in order, then stops on the
+        // last one — no wrap-around back to the first.
+        while (loadingPhraseIndex < LoadingPhrases.size - 1) {
+            delay(LOADING_PHRASE_INTERVAL_MS)
+            loadingPhraseIndex++
+        }
+    }
+    val loadingTextAlpha by rememberInfiniteTransition(label = "loadingTextPulse").animateFloat(
+        initialValue = 0.4f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "loadingTextPulseAlpha"
+    )
 
     LaunchedEffect(query) {
         // Wait for the first real layout pass so the geometry below is accurate.
@@ -193,9 +230,11 @@ fun LoadingScreen(
         onComplete()
     }
 
+    Scaffold(modifier = modifier) { innerPadding ->
     Box(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
+            .padding(innerPadding)
             .background(GraphBackground)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -203,19 +242,14 @@ fun LoadingScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 32.dp, start = 24.dp, end = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
                     text = "LORE",
-                    fontSize = 22.sp,
+                    fontSize = 32.sp,
                     fontWeight = FontWeight.Bold,
-                    letterSpacing = 3.sp,
-                    color = Color(0xFFECECEC)
-                )
-                Text(
-                    text = "Searching your memory...",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF9B9B9B),
-                    modifier = Modifier.padding(top = 4.dp)
+                    letterSpacing = 4.sp,
+                    color = MaterialTheme.colorScheme.onBackground
                 )
             }
 
@@ -271,6 +305,17 @@ fun LoadingScreen(
                 }
             }
         }
+
+        Text(
+            text = LoadingPhrases[loadingPhraseIndex],
+            style = MaterialTheme.typography.titleMedium,
+            color = Color(0xFF9B9B9B),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 100.dp)
+                .graphicsLayer { alpha = loadingTextAlpha }
+        )
+    }
     }
 }
 
