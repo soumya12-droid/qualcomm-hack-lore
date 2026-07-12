@@ -74,6 +74,7 @@ fun HomeScreen(
     var query by remember { mutableStateOf("") }
     var visibleRecentCount by remember { mutableIntStateOf(RECENT_SEARCHES_PAGE_SIZE) }
     val voiceState by viewModel.voiceState.collectAsStateWithLifecycle()
+    val waveformLevels by viewModel.waveformLevels.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -184,6 +185,7 @@ fun HomeScreen(
                         },
                         isRecording = voiceState is VoiceState.Recording,
                         isTranscribing = voiceState is VoiceState.Transcribing,
+                        waveformLevels = waveformLevels,
                         modifier = Modifier.graphicsLayer {
                             scaleX = fieldScale.value
                             scaleY = fieldScale.value
